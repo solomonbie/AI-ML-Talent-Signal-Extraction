@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Signal / AI-ML Talent Sourcer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: #12141C;
+    --panel: #1A1D28;
+    --panel-2: #20242F;
+    --ink: #EDE9E2;
+    --ink-dim: #9AA0AE;
+    --rule: #2C303C;
+    --stamp-high: #6FCF97;
+    --stamp-medium: #E8A33D;
+    --stamp-low: #6B7280;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--ink);
+    font-family:'Source Serif 4', Georgia, serif;
+    min-height:100vh;
+  }
+  .wrap{ max-width: 920px; margin: 0 auto; padding: 48px 24px 80px; }
+
+  header{ margin-bottom: 36px; }
+  .eyebrow{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:11px; letter-spacing:.18em; text-transform:uppercase;
+    color: var(--stamp-medium); margin:0 0 10px;
+  }
+  h1{
+    font-size: 34px; margin: 0 0 8px; font-weight:600; letter-spacing:-0.01em;
+  }
+  .sub{ color:var(--ink-dim); font-size:15px; max-width:60ch; line-height:1.5; margin:0; }
+
+  form{
+    display:flex; gap:10px; margin-top:28px; flex-wrap:wrap;
+  }
+  input[type=text]{
+    flex:1; min-width:240px;
+    background: var(--panel);
+    border:1px solid var(--rule);
+    color: var(--ink);
+    font-family:'IBM Plex Mono', monospace;
+    font-size:14px;
+    padding:14px 16px;
+    border-radius:2px;
+  }
+  input[type=text]:focus{ outline:2px solid var(--stamp-medium); outline-offset:-1px; }
+  button{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:13px; letter-spacing:.04em; text-transform:uppercase;
+    background: var(--stamp-medium);
+    color: #1B1400;
+    border:none; padding:14px 22px; border-radius:2px; cursor:pointer;
+    font-weight:600;
+  }
+  button:hover{ filter:brightness(1.08); }
+  button:disabled{ opacity:.5; cursor:default; }
+
+  .options{
+    display:flex; align-items:center; gap:8px; margin-top:12px;
+    font-family:'IBM Plex Mono', monospace; font-size:12px; color:var(--ink-dim);
+  }
+
+  .config-hint{
+    font-family:'IBM Plex Mono', monospace; font-size:11px; color:var(--ink-dim);
+    margin-top:10px;
+  }
+  .config-hint code{ color:var(--ink); }
+
+  .coverage{
+    margin-top:28px; padding:16px 18px;
+    background: var(--panel); border:1px solid var(--rule); border-radius:3px;
+    font-family:'IBM Plex Mono', monospace; font-size:12px; color: var(--ink-dim);
+    line-height:1.8;
+  }
+  .coverage strong{ color: var(--ink); }
+  .coverage .note{ color: var(--stamp-medium); display:block; margin-top:6px; }
+
+  .errors{
+    margin-top:14px; padding:12px 16px; border-left:3px solid #C0553E;
+    background: #241A19; font-family:'IBM Plex Mono', monospace; font-size:12px;
+    color:#E6B3A6; white-space:pre-wrap;
+  }
+
+  .cards{ margin-top: 34px; display:flex; flex-direction:column; gap:18px; }
+
+  .card{
+    position:relative;
+    background: var(--panel);
+    border:1px solid var(--rule);
+    border-radius:3px;
+    padding: 22px 24px 20px;
+  }
+  .card-top{
+    display:flex; justify-content:space-between; align-items:flex-start; gap:16px;
+  }
+  .name{ font-size:21px; font-weight:600; margin:0; }
+  .score{
+    font-family:'IBM Plex Mono', monospace; color: var(--ink-dim); font-size:12px; margin-top:4px;
+  }
+  .score b{ color: var(--ink); font-size:14px; }
+
+  .stamp{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:11px; letter-spacing:.12em; text-transform:uppercase;
+    border:2px solid; border-radius:3px;
+    padding:6px 10px;
+    transform: rotate(-4deg);
+    white-space:nowrap;
+    font-weight:600;
+    flex-shrink:0;
+  }
+  .stamp.high{ color: var(--stamp-high); border-color: var(--stamp-high); }
+  .stamp.medium{ color: var(--stamp-medium); border-color: var(--stamp-medium); }
+  .stamp.low{ color: var(--stamp-low); border-color: var(--stamp-low); }
+
+  .metrics{
+    display:flex; gap:18px; flex-wrap:wrap; margin: 14px 0 4px;
+    font-family:'IBM Plex Mono', monospace; font-size:12px; color: var(--ink-dim);
+  }
+  .metrics span b{ color: var(--ink); }
+
+  .notes{
+    margin-top: 10px; font-size:13px; color: var(--stamp-medium);
+    font-family:'IBM Plex Mono', monospace; line-height:1.6;
+  }
+
+  details{ margin-top: 14px; border-top:1px solid var(--rule); padding-top: 12px; }
+  summary{
+    cursor:pointer; font-family:'IBM Plex Mono', monospace; font-size:12px;
+    color: var(--ink-dim); text-transform:uppercase; letter-spacing:.06em;
+  }
+  .evidence-group{ margin-top:12px; }
+  .evidence-group h4{
+    font-family:'IBM Plex Mono', monospace; font-size:11px; text-transform:uppercase;
+    letter-spacing:.08em; color: var(--stamp-medium); margin:0 0 6px;
+  }
+  .evidence-item{
+    font-size:14px; line-height:1.5; padding:6px 10px; margin-bottom:6px;
+    background: var(--panel-2); border-radius:2px; border-left: 2px solid var(--rule);
+  }
+  .evidence-item a{ color: var(--ink); text-decoration: underline; text-decoration-color: var(--rule); }
+  .evidence-item .meta{ font-family:'IBM Plex Mono', monospace; font-size:11px; color: var(--ink-dim); display:block; margin-top:2px; }
+
+  .empty, .loading{
+    margin-top: 40px; text-align:center; color: var(--ink-dim);
+    font-family:'IBM Plex Mono', monospace; font-size:13px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <p class="eyebrow">Open-source · evidence-based</p>
+    <h1>AI / ML Talent Sourcer</h1>
+    <p class="sub">
+      Give it a topic. It pulls fresh signal from arXiv, Semantic Scholar, GitHub, and
+      Hugging Face, then triangulates who's actually active in that space — showing the
+      evidence and confidence behind every match, never a silent merge.
+    </p>
+  </header>
+
+  <form id="search-form">
+    <input id="topic" type="text" placeholder="e.g. LLM quantization, vision transformers, RLHF..." required>
+    <button id="submit-btn" type="submit">Search</button>
+  </form>
+  <div class="options">
+    <label><input type="checkbox" id="deep-lookup"> deep GitHub name-matching (uses more API calls)</label>
+  </div>
+  <p class="config-hint">
+    Backend URL: <code id="backend-url-label">http://localhost:8000</code>
+    — change it in the JS at the bottom of this file if you're hosting the backend elsewhere.
+  </p>
+
+  <div id="results"></div>
+</div>
+
+<script>
+const BACKEND_URL = "http://localhost:8000";
+document.getElementById("backend-url-label").textContent = BACKEND_URL;
+
+const form = document.getElementById("search-form");
+const resultsEl = document.getElementById("results");
+const submitBtn = document.getElementById("submit-btn");
+
+function escapeHtml(str){
+  if(!str) return "";
+  return str.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+function renderCoverage(coverage, errors){
+  let html = `<div class="coverage">
+    Topic: <strong>${escapeHtml(coverage.topic)}</strong> ·
+    arXiv papers: <strong>${coverage.arxiv_papers_found}</strong> ·
+    Semantic Scholar papers: <strong>${coverage.semantic_scholar_papers_found}</strong> ·
+    GitHub repos: <strong>${coverage.github_repos_found}</strong> ·
+    HF models: <strong>${coverage.huggingface_models_found}</strong><br>
+    Profiles built: <strong>${coverage.total_profiles_built}</strong> ·
+    Cross-source matches: <strong>${coverage.cross_source_matches}</strong>
+    <span class="note">${escapeHtml(coverage.note)}</span>
+  </div>`;
+  if(errors && errors.length){
+    html += `<div class="errors">${errors.map(escapeHtml).join("\n")}</div>`;
+  }
+  return html;
+}
+
+function evidenceList(items, renderFn){
+  if(!items || !items.length) return "";
+  return items.map(renderFn).join("");
+}
+
+function renderProfile(p){
+  const stampClass = p.confidence; // high | medium | low
+  const notes = (p.match_notes || []).map(n => `<div>&#9888; ${escapeHtml(n)}</div>`).join("");
+
+  const arxivHtml = evidenceList(p.sources.arxiv, item => `
+    <div class="evidence-item">
+      <a href="${item.url}" target="_blank" rel="noopener">${escapeHtml(item.title)}</a>
+      <span class="meta">arXiv · ${item.published ? item.published.slice(0,10) : ""}</span>
+    </div>`);
+
+  const ssHtml = evidenceList(p.sources.semantic_scholar, item => `
+    <div class="evidence-item">
+      <a href="${item.url}" target="_blank" rel="noopener">${escapeHtml(item.title)}</a>
+      <span class="meta">Semantic Scholar · ${item.year || "n/a"} · ${item.citationCount} citations</span>
+    </div>`);
+
+  const ghHtml = evidenceList(p.sources.github, item => `
+    <div class="evidence-item">
+      <a href="${item.url}" target="_blank" rel="noopener">${escapeHtml(item.repo)}</a>
+      <span class="meta">GitHub · ${item.stars}&#9733; repo · ${item.contributions} contributions</span>
+    </div>`);
+
+  const hfHtml = evidenceList(p.sources.huggingface, item => `
+    <div class="evidence-item">
+      <a href="${item.url}" target="_blank" rel="noopener">${escapeHtml(item.id)}</a>
+      <span class="meta">Hugging Face · ${item.downloads} downloads · ${item.likes} likes</span>
+    </div>`);
+
+  return `
+  <div class="card">
+    <div class="card-top">
+      <div>
+        <p class="name">${escapeHtml(p.name)}</p>
+        <p class="score">score <b>${p.score}</b> &nbsp;·&nbsp; ${p.source_count} source${p.source_count===1?"":"s"}</p>
+      </div>
+      <div class="stamp ${stampClass}">${p.confidence} signal</div>
+    </div>
+
+    <div class="metrics">
+      <span>citations <b>${p.citation_count}</b></span>
+      <span>influential citations <b>${p.influential_citation_count}</b></span>
+      <span>GitHub stars (contributed repos) <b>${p.github_stars}</b></span>
+      <span>HF downloads <b>${p.hf_downloads}</b></span>
+    </div>
+
+    ${notes ? `<div class="notes">${notes}</div>` : ""}
+
+    <details>
+      <summary>Show evidence trail</summary>
+      ${arxivHtml ? `<div class="evidence-group"><h4>arXiv</h4>${arxivHtml}</div>` : ""}
+      ${ssHtml ? `<div class="evidence-group"><h4>Semantic Scholar</h4>${ssHtml}</div>` : ""}
+      ${ghHtml ? `<div class="evidence-group"><h4>GitHub</h4>${ghHtml}</div>` : ""}
+      ${hfHtml ? `<div class="evidence-group"><h4>Hugging Face</h4>${hfHtml}</div>` : ""}
+    </details>
+  </div>`;
+}
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const topic = document.getElementById("topic").value.trim();
+  const deepLookup = document.getElementById("deep-lookup").checked;
+  if(!topic) return;
+
+  submitBtn.disabled = true;
+  submitBtn.textContent = "Searching...";
+  resultsEl.innerHTML = `<div class="loading">Querying arXiv, Semantic Scholar, GitHub, Hugging Face...</div>`;
+
+  try{
+    const url = `${BACKEND_URL}/api/search?topic=${encodeURIComponent(topic)}&deep_github_lookup=${deepLookup}`;
+    const resp = await fetch(url);
+    if(!resp.ok){
+      throw new Error(`Backend returned HTTP ${resp.status}`);
+    }
+    const data = await resp.json();
+
+    let html = renderCoverage(data.coverage, data.errors);
+    if(!data.profiles.length){
+      html += `<div class="empty">No profiles found for this topic. Try a broader term.</div>`;
+    } else {
+      html += `<div class="cards">${data.profiles.map(renderProfile).join("")}</div>`;
+    }
+    resultsEl.innerHTML = html;
+  } catch(err){
+    resultsEl.innerHTML = `<div class="errors">Could not reach the backend at ${BACKEND_URL}.
+Make sure it's running (see README) — error: ${escapeHtml(err.message)}</div>`;
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = "Search";
+  }
+});
+</script>
+</body>
+</html>

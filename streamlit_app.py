@@ -113,7 +113,7 @@ def run_search(topic: str, deep_lookup: bool):
             for repo in github_repos:
                 owner, name = repo["owner_login"], repo["name"]
                 if owner and name:
-                    futures[pool.submit(sources.get_repo_contributors, owner, name)] = repo["full_name"]
+                    futures[pool.submit(sources.get_repo_contributors, owner, name, 25)] = repo["full_name"]
             for future in as_completed(futures):
                 full_name = futures[future]
                 contributors, err = future.result()
@@ -143,7 +143,7 @@ def run_search(topic: str, deep_lookup: bool):
         topic, arxiv_papers, ss_papers, github_repos, hf_models,
         github_contributors_by_repo, github_users_by_login,
     )
-    return profiles, coverage, errors
+    return profiles, coverage, errors, github_repos, github_contributors_by_repo
 
 
 # ---------------------------------------------------------------------------
@@ -161,6 +161,16 @@ def render_profile(p):
         with top_l:
             st.markdown(f"### {p['name']}")
             st.caption(f"score **{p['score']}** · {p['source_count']} source(s)")
+            links = p.get("links", {})
+            link_bits = []
+            if links.get("github"):
+                link_bits.append(f"[GitHub profile]({links['github']})")
+            if links.get("huggingface"):
+                link_bits.append(f"[Hugging Face profile]({links['huggingface']})")
+            if links.get("linkedin_search"):
+                link_bits.append(f"[Search LinkedIn]({links['linkedin_search']})")
+            if link_bits:
+                st.markdown(" · ".join(link_bits))
         with top_r:
             st.markdown(f'<span class="stamp {stamp_class}">{p["confidence"]} signal</span>',
                         unsafe_allow_html=True)
@@ -206,7 +216,7 @@ def render_profile(p):
 # ---------------------------------------------------------------------------
 if search_clicked and topic.strip():
     with st.spinner("Querying arXiv, Semantic Scholar, GitHub, Hugging Face..."):
-        profiles, coverage, errors = run_search(topic.strip(), deep_lookup)
+        profiles, coverage, errors, github_repos, github_contributors_by_repo = run_search(topic.strip(), deep_lookup)
 
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("arXiv papers", coverage["arxiv_papers_found"])
@@ -221,12 +231,38 @@ if search_clicked and topic.strip():
             for e in errors:
                 st.text(e)
 
-    if not profiles:
-        st.info("No profiles found for this topic. Try a broader term.")
-    else:
-        st.markdown(f"### {len(profiles)} profile(s), ranked by score")
-        for p in profiles:
-            render_profile(p)
+    tab_ranked, tab_contributors = st.tabs(["🏆 Ranked profiles", "👥 Browse contributors by repo"])
+
+    with tab_ranked:
+        if not profiles:
+            st.info("No profiles found for this topic. Try a broader term.")
+        else:
+            st.markdown(f"### {len(profiles)} profile(s), ranked by score")
+            for p in profiles:
+                render_profile(p)
+
+    with tab_contributors:
+        st.caption(
+            "Unranked, unscored — every contributor GitHub reports for each repo found, "
+            "including people with just 1-2 commits. These are often the reachable, "
+            "less-senior contributors who get buried by citation/star-weighted scoring "
+            "in the Ranked tab, but are still real, verifiable signal that someone works "
+            "hands-on in this area."
+        )
+        if not github_repos:
+            st.info("No GitHub repos found for this topic.")
+        for repo in github_repos:
+            contributors = github_contributors_by_repo.get(repo["full_name"], [])
+            with st.expander(f"{repo['full_name']} — {repo['stars']}★ · {len(contributors)} contributor(s) shown"):
+                st.markdown(f"[Open repo on GitHub]({repo['url']})")
+                if repo.get("description"):
+                    st.caption(repo["description"])
+                if not contributors:
+                    st.caption("No contributor data returned for this repo.")
+                for c in contributors:
+                    st.markdown(
+                        f"- [@{c['login']}]({c['html_url']}) — {c['contributions']} commit(s) to this repo"
+                    )
 elif search_clicked:
     st.warning("Enter a topic first.")
 else:

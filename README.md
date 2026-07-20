@@ -1,4 +1,5 @@
-# AI/ML Talent Sourcer
+# AI/ML Talent -Signal-Extraction
+
 
 An open-source, free-to-run tool for finding people actually active in a
 given AI/ML research area — by cross-referencing arXiv, Semantic Scholar,

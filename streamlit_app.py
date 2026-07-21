@@ -1,18 +1,11 @@
 """
 streamlit_app.py
 
-The whole tool as one Streamlit app — no separate backend, no CORS, no
-"is the server running" step. Reuses the exact same sources.py and
-aggregator.py logic as the FastAPI version (in backend/), just with a
-Streamlit UI on top instead of FastAPI + a hand-written HTML frontend.
+The whole tool as one Streamlit app — no separate backend, no CORS.
 
 Run locally:
     pip install -r requirements.txt
     streamlit run streamlit_app.py
-
-Deploy for free:
-    Push this repo to GitHub, then go to https://streamlit.io/cloud,
-    connect the repo, and point it at streamlit_app.py. No server to manage.
 """
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -21,13 +14,10 @@ import streamlit as st
 
 import sources
 import aggregator
+import topic_expansion
 
 st.set_page_config(page_title="AI/ML Talent Sourcer", page_icon="🔎", layout="wide")
 
-# ---------------------------------------------------------------------------
-# Styling — same "evidence dossier" look as the original HTML frontend,
-# just injected as CSS since Streamlit doesn't give us raw HTML control.
-# ---------------------------------------------------------------------------
 st.markdown("""
 <style>
     .stApp { background-color: #12141C; }
@@ -56,9 +46,6 @@ st.write(
     "evidence and confidence behind every match, never a silent merge."
 )
 
-# ---------------------------------------------------------------------------
-# Search controls
-# ---------------------------------------------------------------------------
 col1, col2 = st.columns([4, 1])
 with col1:
     topic = st.text_input("Topic", placeholder="e.g. LLM quantization, vision transformers, RLHF...",
@@ -68,7 +55,7 @@ with col2:
 
 location_filter = st.text_input(
     "Filter by location (optional)",
-    placeholder="e.g. San Francisco, Berlin, Remote — matches GitHub location or Semantic Scholar affiliation",
+    placeholder="e.g. San Francisco, Berlin, Remote",
 )
 st.caption(
     "Location is sparse by design: it only comes from a GitHub profile's self-reported "
@@ -80,44 +67,67 @@ deep_lookup = st.checkbox(
     "Deep GitHub name-matching (uses more API calls — turn on once you've set a GITHUB_TOKEN)"
 )
 
+related_terms = topic_expansion.expand_topic(topic, max_extra=2) if topic.strip() else []
+expand_related = st.checkbox(
+    f"Also search related terms{' (' + ', '.join(related_terms) + ')' if related_terms else ''} "
+    "(uses more API calls)"
+)
+if topic.strip() and not related_terms:
+    st.caption("No curated related terms for this topic yet — this checkbox has no effect for it.")
+
 with st.expander("Optional: API keys (raises free rate limits)"):
     st.caption(
-        "These are only needed if you're hitting rate limits. Set them as environment "
-        "variables (or Streamlit Cloud 'Secrets') rather than typing them here — see README."
+        "Set these as environment variables or Streamlit Cloud 'Secrets', not typed here."
     )
 
 
-# ---------------------------------------------------------------------------
-# Cached fetch — avoids re-hitting all four APIs every time an unrelated
-# widget (like the checkbox) triggers a Streamlit rerun. Cache expires
-# after 10 minutes so results don't go stale silently (Lesson #3).
-# ---------------------------------------------------------------------------
+def _dedup(items, key_fn):
+    seen = set()
+    out = []
+    for item in items:
+        k = key_fn(item)
+        if k and k not in seen:
+            seen.add(k)
+            out.append(item)
+    return out
+
+
 @st.cache_data(ttl=600, show_spinner=False)
-def run_search(topic: str, deep_lookup: bool):
+def run_search(topic: str, deep_lookup: bool, expand_related: bool = False):
     errors = []
+    topics_to_search = [topic]
+    if expand_related:
+        topics_to_search += topic_expansion.expand_topic(topic, max_extra=2)
+
+    arxiv_papers, ss_papers, github_repos, hf_models = [], [], [], []
 
     with ThreadPoolExecutor(max_workers=4) as pool:
-        futures = {
-            pool.submit(sources.search_arxiv, topic, 15): "arxiv",
-            pool.submit(sources.search_semantic_scholar, topic, 15): "semantic_scholar",
-            pool.submit(sources.search_github_repos, topic, 6): "github_repos",
-            pool.submit(sources.search_huggingface_models, topic, 15): "huggingface",
-        }
-        results = {}
+        futures = {}
+        for t in topics_to_search:
+            futures[pool.submit(sources.search_arxiv, t, 15)] = ("arxiv", t)
+            futures[pool.submit(sources.search_semantic_scholar, t, 15)] = ("semantic_scholar", t)
+            futures[pool.submit(sources.search_github_repos, t, 6)] = ("github_repos", t)
+            futures[pool.submit(sources.search_huggingface_models, t, 15)] = ("huggingface", t)
         for future in as_completed(futures):
-            key = futures[future]
+            kind, t = futures[future]
             data, err = future.result()
-            results[key] = data
             if err:
-                errors.append(f"[{key}] {err}")
+                errors.append(f"[{kind}:{t}] {err}")
+                continue
+            if kind == "arxiv":
+                arxiv_papers.extend(data)
+            elif kind == "semantic_scholar":
+                ss_papers.extend(data)
+            elif kind == "github_repos":
+                github_repos.extend(data)
+            elif kind == "huggingface":
+                hf_models.extend(data)
 
-    arxiv_papers = results.get("arxiv", [])
-    ss_papers = results.get("semantic_scholar", [])
-    github_repos = results.get("github_repos", [])
-    hf_models = results.get("huggingface", [])
+    arxiv_papers = _dedup(arxiv_papers, lambda x: x.get("arxiv_id") or x.get("url"))
+    ss_papers = _dedup(ss_papers, lambda x: x.get("url") or x.get("title"))
+    github_repos = _dedup(github_repos, lambda x: x.get("full_name"))
+    hf_models = _dedup(hf_models, lambda x: x.get("id"))
 
-    # Semantic Scholar author affiliations — one batched call for every
-    # author found, not one call per author (keeps us under the rate limit).
     ss_author_ids = [
         a.get("authorId") for paper in ss_papers for a in paper["authors"] if a.get("authorId")
     ]
@@ -163,15 +173,16 @@ def run_search(topic: str, deep_lookup: bool):
         github_contributors_by_repo, github_users_by_login,
         ss_author_affiliations,
     )
+    coverage["expanded_terms"] = topics_to_search[1:]
     return profiles, coverage, errors, github_repos, github_contributors_by_repo
 
 
-# ---------------------------------------------------------------------------
-# Rendering
-# ---------------------------------------------------------------------------
 def render_evidence(items, formatter):
     for item in items:
         st.markdown(f'<div class="evidence-item">{formatter(item)}</div>', unsafe_allow_html=True)
+
+
+VELOCITY_LABELS = {"rising": "🚀 Rising", "active": "🟢 Active", "quiet": "🕓 Quiet"}
 
 
 def render_profile(p):
@@ -201,6 +212,14 @@ def render_profile(p):
         m2.metric("Influential citations", p["influential_citation_count"])
         m3.metric("GitHub stars", p["github_stars"])
         m4.metric("HF downloads", p["hf_downloads"])
+
+        velocity = p.get("velocity")
+        if velocity:
+            label = VELOCITY_LABELS.get(velocity, velocity)
+            st.caption(
+                f"{label} — {p['recent_publications']} publication(s) in the last ~2 years "
+                f"(latest: {p['latest_publication_year']})"
+            )
 
         for note in p.get("match_notes", []):
             st.markdown(f":warning: *{note}*")
@@ -232,21 +251,19 @@ def render_profile(p):
                 ))
 
 
-# ---------------------------------------------------------------------------
-# Main flow
-# ---------------------------------------------------------------------------
-# Main flow
-# ---------------------------------------------------------------------------
 if search_clicked and topic.strip():
     st.session_state["last_topic"] = topic.strip()
     st.session_state["last_deep_lookup"] = deep_lookup
+    st.session_state["last_expand_related"] = expand_related
 elif search_clicked:
     st.warning("Enter a topic first.")
 
 if "last_topic" in st.session_state:
     with st.spinner("Querying arXiv, Semantic Scholar, GitHub, Hugging Face..."):
         profiles, coverage, errors, github_repos, github_contributors_by_repo = run_search(
-            st.session_state["last_topic"], st.session_state["last_deep_lookup"]
+            st.session_state["last_topic"],
+            st.session_state["last_deep_lookup"],
+            st.session_state.get("last_expand_related", False),
         )
 
     c1, c2, c3, c4, c5 = st.columns(5)
@@ -256,14 +273,14 @@ if "last_topic" in st.session_state:
     c4.metric("HF models", coverage["huggingface_models_found"])
     c5.metric("Cross-source matches", coverage["cross_source_matches"])
     st.caption(coverage["note"])
+    if coverage.get("expanded_terms"):
+        st.caption(f"Also searched related terms: {', '.join(coverage['expanded_terms'])}")
 
     if errors:
         with st.expander(f"⚠️ {len(errors)} source error(s) — click to view"):
             for e in errors:
                 st.text(e)
 
-    # Apply location filter (re-applies live as you type, no new search needed
-    # — profiles come from the cache, not a fresh API call)
     if location_filter.strip():
         q = location_filter.strip().lower()
         filtered_profiles = [p for p in profiles if p.get("location") and q in p["location"].lower()]
@@ -277,11 +294,7 @@ if "last_topic" in st.session_state:
             st.caption(f"Showing {len(filtered_profiles)} of {len(profiles)} profiles matching location \"{location_filter.strip()}\"")
         if not filtered_profiles:
             if profiles and location_filter.strip():
-                st.info(
-                    "No profiles have location data matching that filter. Remember: location "
-                    "is only known for profiles where GitHub or Semantic Scholar reported one — "
-                    "try clearing the filter, or turn on 'deep GitHub name-matching' and re-search."
-                )
+                st.info("No profiles have location data matching that filter. Try clearing it.")
             else:
                 st.info("No profiles found for this topic. Try a broader term.")
         else:
@@ -292,11 +305,7 @@ if "last_topic" in st.session_state:
     with tab_contributors:
         st.caption(
             "Unranked, unscored — every contributor GitHub reports for each repo found, "
-            "including people with just 1-2 commits. These are often the reachable, "
-            "less-senior contributors who get buried by citation/star-weighted scoring "
-            "in the Ranked tab, but are still real, verifiable signal that someone works "
-            "hands-on in this area. (Location filter above does not apply to this tab — "
-            "GitHub's contributor list endpoint doesn't include location.)"
+            "including people with just 1-2 commits."
         )
         if not github_repos:
             st.info("No GitHub repos found for this topic.")
@@ -309,8 +318,6 @@ if "last_topic" in st.session_state:
                 if not contributors:
                     st.caption("No contributor data returned for this repo.")
                 for c in contributors:
-                    st.markdown(
-                        f"- [@{c['login']}]({c['html_url']}) — {c['contributions']} commit(s) to this repo"
-                    )
+                    st.markdown(f"- [@{c['login']}]({c['html_url']}) — {c['contributions']} commit(s)")
 else:
     st.caption("Enter a topic above and hit Search to get started.")

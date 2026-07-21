@@ -70,7 +70,17 @@ def search(
     github_repos = results.get("github_repos", [])
     hf_models = results.get("huggingface", [])
 
-    # GitHub contributors — one call per repo we found, in parallel.
+    # Semantic Scholar author affiliations — one batched call for every
+    # author found, not one call per author (keeps us under the rate limit).
+    ss_author_ids = [
+        a.get("authorId") for paper in ss_papers for a in paper["authors"] if a.get("authorId")
+    ]
+    ss_author_affiliations, aff_err = sources.get_semantic_scholar_authors_batch(ss_author_ids)
+    if aff_err:
+        errors.append(f"[semantic_scholar_affiliations] {aff_err}")
+
+    # Fetch more contributors per repo, not just top 8, so minor/reachable
+    # contributors aren't cut off before they even reach the aggregator.
     github_contributors_by_repo = {}
     if github_repos:
         with ThreadPoolExecutor(max_workers=4) as pool:
@@ -78,7 +88,7 @@ def search(
             for repo in github_repos:
                 owner, name = repo["owner_login"], repo["name"]
                 if owner and name:
-                    futures[pool.submit(sources.get_repo_contributors, owner, name)] = repo["full_name"]
+                    futures[pool.submit(sources.get_repo_contributors, owner, name, 25)] = repo["full_name"]
             for future in as_completed(futures):
                 full_name = futures[future]
                 contributors, err = future.result()
@@ -86,9 +96,9 @@ def search(
                 if err:
                     errors.append(f"[github_contributors:{full_name}] {err}")
 
-    # Optional, opt-in: resolve GitHub usernames to public display names so
-    # the aggregator can attempt a conservative name match. Skipped by
-    # default to conserve GitHub's rate limit.
+    # Optional, opt-in: resolve GitHub usernames to public display names (and
+    # location) so the aggregator can attempt a conservative name match.
+    # Skipped by default to conserve GitHub's rate limit.
     github_users_by_login = {}
     if deep_github_lookup:
         all_logins = {
@@ -110,6 +120,7 @@ def search(
     profiles, coverage = aggregator.build_profiles(
         topic, arxiv_papers, ss_papers, github_repos, hf_models,
         github_contributors_by_repo, github_users_by_login,
+        ss_author_affiliations,
     )
 
     return {

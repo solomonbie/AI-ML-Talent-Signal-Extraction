@@ -204,9 +204,42 @@ def get_github_user(login: str):
         "name": u.get("name"),
         "company": u.get("company"),
         "bio": u.get("bio"),
+        "location": u.get("location"),
         "html_url": u.get("html_url"),
         "followers": u.get("followers", 0),
     }, None
+
+
+def get_semantic_scholar_authors_batch(author_ids):
+    """
+    Given Semantic Scholar authorIds (collected from paper search results),
+    fetches their affiliations in ONE batched call rather than one call per
+    author — important for staying under the free rate limit.
+    Returns {authorId: [affiliation strings]}.
+    """
+    author_ids = [a for a in set(author_ids) if a]
+    if not author_ids:
+        return {}, None
+
+    url = "https://api.semanticscholar.org/graph/v1/author/batch"
+    headers = {"Content-Type": "application/json"}
+    if SEMANTIC_SCHOLAR_API_KEY:
+        headers["x-api-key"] = SEMANTIC_SCHOLAR_API_KEY
+    params = {"fields": "name,affiliations"}
+
+    try:
+        resp = requests.post(url, headers=headers, params=params,
+                              json={"ids": author_ids}, timeout=REQUEST_TIMEOUT)
+        if resp.status_code != 200:
+            return {}, f"{url} -> HTTP {resp.status_code}: {resp.text[:200]}"
+    except requests.RequestException as e:
+        return {}, f"{url} -> request failed: {e}"
+
+    result = {}
+    for item in resp.json():
+        if item and item.get("authorId"):
+            result[item["authorId"]] = item.get("affiliations") or []
+    return result, None
 
 
 # ---------------------------------------------------------------------------

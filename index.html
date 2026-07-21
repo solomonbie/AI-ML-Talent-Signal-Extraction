@@ -246,12 +246,19 @@ function renderProfile(p){
       <span class="meta">Hugging Face · ${item.downloads} downloads · ${item.likes} likes</span>
     </div>`);
 
+  const links = p.links || {};
+  const linkBits = [];
+  if(links.github) linkBits.push(`<a href="${links.github}" target="_blank" rel="noopener">GitHub profile</a>`);
+  if(links.huggingface) linkBits.push(`<a href="${links.huggingface}" target="_blank" rel="noopener">Hugging Face profile</a>`);
+  if(links.linkedin_search) linkBits.push(`<a href="${links.linkedin_search}" target="_blank" rel="noopener">Search LinkedIn</a>`);
+
   return `
   <div class="card">
     <div class="card-top">
       <div>
         <p class="name">${escapeHtml(p.name)}</p>
-        <p class="score">score <b>${p.score}</b> &nbsp;·&nbsp; ${p.source_count} source${p.source_count===1?"":"s"}</p>
+        <p class="score">score <b>${p.score}</b> &nbsp;·&nbsp; ${p.source_count} source${p.source_count===1?"":"s"}${p.location ? ` &nbsp;·&nbsp; 📍 ${escapeHtml(p.location)}` : ""}</p>
+        ${linkBits.length ? `<p class="score">${linkBits.join(" &nbsp;·&nbsp; ")}</p>` : ""}
       </div>
       <div class="stamp ${stampClass}">${p.confidence} signal</div>
     </div>

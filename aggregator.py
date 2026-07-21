@@ -49,7 +49,8 @@ def match_confidence(name_a: str, name_b: str) -> str:
 
 
 def build_profiles(topic, arxiv_papers, ss_papers, github_repos, hf_models,
-                    github_contributors_by_repo, github_users_by_login):
+                    github_contributors_by_repo, github_users_by_login,
+                    ss_author_affiliations=None):
     """
     Builds researcher profiles by starting from named authors (arXiv +
     Semantic Scholar, since those come with real names) and then
@@ -59,6 +60,7 @@ def build_profiles(topic, arxiv_papers, ss_papers, github_repos, hf_models,
     Returns a list of profile dicts, sorted by score descending, plus
     a coverage report (Lesson #3: report what was actually found this run).
     """
+    ss_author_affiliations = ss_author_affiliations or {}
     profiles = {}  # normalized_name -> profile dict
 
     def get_or_create(name):
@@ -68,6 +70,7 @@ def build_profiles(topic, arxiv_papers, ss_papers, github_repos, hf_models,
         if key not in profiles:
             profiles[key] = {
                 "name": name,
+                "location": None,  # sparse — only set if a source reports one
                 "sources": {"arxiv": [], "semantic_scholar": [], "github": [], "huggingface": []},
                 "citation_count": 0,
                 "influential_citation_count": 0,
@@ -104,6 +107,12 @@ def build_profiles(topic, arxiv_papers, ss_papers, github_repos, hf_models,
             p["citation_count"] += paper["citationCount"]
             p["influential_citation_count"] += paper["influentialCitationCount"]
 
+            author_id = author.get("authorId")
+            if author_id and not p["location"]:
+                affiliations = ss_author_affiliations.get(author_id)
+                if affiliations:
+                    p["location"] = ", ".join(affiliations)
+
     # --- Secondary evidence: GitHub. Usernames aren't names, so we only
     # attach a contributor to an existing profile if their public GitHub
     # display name matches (exact/partial) an author we already found in
@@ -133,6 +142,8 @@ def build_profiles(topic, arxiv_papers, ss_papers, github_repos, hf_models,
                 })
                 p["github_stars"] += repo["stars"]
                 p["github_contributions"] += c["contributions"]
+                if user and user.get("location") and not p["location"]:
+                    p["location"] = user["location"]
                 p["match_notes"].append(
                     f"GitHub user '{login}' ({display_name}) {match_type}-matched to this profile by name — verify before treating as confirmed identity."
                 )
@@ -141,6 +152,7 @@ def build_profiles(topic, arxiv_papers, ss_papers, github_repos, hf_models,
                 if gkey not in github_only:
                     github_only[gkey] = {
                         "name": display_name or f"@{login} (GitHub)",
+                        "location": (user or {}).get("location"),
                         "sources": {"arxiv": [], "semantic_scholar": [], "github": [], "huggingface": []},
                         "citation_count": 0, "influential_citation_count": 0,
                         "github_stars": 0, "github_contributions": 0,
@@ -182,6 +194,7 @@ def build_profiles(topic, arxiv_papers, ss_papers, github_repos, hf_models,
             if hkey not in hf_only:
                 hf_only[hkey] = {
                     "name": f"{author} (Hugging Face)",
+                    "location": None,
                     "sources": {"arxiv": [], "semantic_scholar": [], "github": [], "huggingface": []},
                     "citation_count": 0, "influential_citation_count": 0,
                     "github_stars": 0, "github_contributions": 0,

@@ -66,6 +66,16 @@ with col1:
 with col2:
     search_clicked = st.button("Search", type="primary", use_container_width=True)
 
+location_filter = st.text_input(
+    "Filter by location (optional)",
+    placeholder="e.g. San Francisco, Berlin, Remote — matches GitHub location or Semantic Scholar affiliation",
+)
+st.caption(
+    "Location is sparse by design: it only comes from a GitHub profile's self-reported "
+    "location (needs 'deep GitHub name-matching' below) or a Semantic Scholar author "
+    "affiliation, when either is publicly set. Most profiles won't have it."
+)
+
 deep_lookup = st.checkbox(
     "Deep GitHub name-matching (uses more API calls — turn on once you've set a GITHUB_TOKEN)"
 )
@@ -106,6 +116,15 @@ def run_search(topic: str, deep_lookup: bool):
     github_repos = results.get("github_repos", [])
     hf_models = results.get("huggingface", [])
 
+    # Semantic Scholar author affiliations — one batched call for every
+    # author found, not one call per author (keeps us under the rate limit).
+    ss_author_ids = [
+        a.get("authorId") for paper in ss_papers for a in paper["authors"] if a.get("authorId")
+    ]
+    ss_author_affiliations, aff_err = sources.get_semantic_scholar_authors_batch(ss_author_ids)
+    if aff_err:
+        errors.append(f"[semantic_scholar_affiliations] {aff_err}")
+
     github_contributors_by_repo = {}
     if github_repos:
         with ThreadPoolExecutor(max_workers=4) as pool:
@@ -142,6 +161,7 @@ def run_search(topic: str, deep_lookup: bool):
     profiles, coverage = aggregator.build_profiles(
         topic, arxiv_papers, ss_papers, github_repos, hf_models,
         github_contributors_by_repo, github_users_by_login,
+        ss_author_affiliations,
     )
     return profiles, coverage, errors, github_repos, github_contributors_by_repo
 
@@ -160,7 +180,8 @@ def render_profile(p):
         top_l, top_r = st.columns([4, 1])
         with top_l:
             st.markdown(f"### {p['name']}")
-            st.caption(f"score **{p['score']}** · {p['source_count']} source(s)")
+            loc_bit = f" · 📍 {p['location']}" if p.get("location") else ""
+            st.caption(f"score **{p['score']}** · {p['source_count']} source(s){loc_bit}")
             links = p.get("links", {})
             link_bits = []
             if links.get("github"):
@@ -214,9 +235,19 @@ def render_profile(p):
 # ---------------------------------------------------------------------------
 # Main flow
 # ---------------------------------------------------------------------------
+# Main flow
+# ---------------------------------------------------------------------------
 if search_clicked and topic.strip():
+    st.session_state["last_topic"] = topic.strip()
+    st.session_state["last_deep_lookup"] = deep_lookup
+elif search_clicked:
+    st.warning("Enter a topic first.")
+
+if "last_topic" in st.session_state:
     with st.spinner("Querying arXiv, Semantic Scholar, GitHub, Hugging Face..."):
-        profiles, coverage, errors, github_repos, github_contributors_by_repo = run_search(topic.strip(), deep_lookup)
+        profiles, coverage, errors, github_repos, github_contributors_by_repo = run_search(
+            st.session_state["last_topic"], st.session_state["last_deep_lookup"]
+        )
 
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("arXiv papers", coverage["arxiv_papers_found"])
@@ -231,14 +262,31 @@ if search_clicked and topic.strip():
             for e in errors:
                 st.text(e)
 
+    # Apply location filter (re-applies live as you type, no new search needed
+    # — profiles come from the cache, not a fresh API call)
+    if location_filter.strip():
+        q = location_filter.strip().lower()
+        filtered_profiles = [p for p in profiles if p.get("location") and q in p["location"].lower()]
+    else:
+        filtered_profiles = profiles
+
     tab_ranked, tab_contributors = st.tabs(["🏆 Ranked profiles", "👥 Browse contributors by repo"])
 
     with tab_ranked:
-        if not profiles:
-            st.info("No profiles found for this topic. Try a broader term.")
+        if location_filter.strip():
+            st.caption(f"Showing {len(filtered_profiles)} of {len(profiles)} profiles matching location \"{location_filter.strip()}\"")
+        if not filtered_profiles:
+            if profiles and location_filter.strip():
+                st.info(
+                    "No profiles have location data matching that filter. Remember: location "
+                    "is only known for profiles where GitHub or Semantic Scholar reported one — "
+                    "try clearing the filter, or turn on 'deep GitHub name-matching' and re-search."
+                )
+            else:
+                st.info("No profiles found for this topic. Try a broader term.")
         else:
-            st.markdown(f"### {len(profiles)} profile(s), ranked by score")
-            for p in profiles:
+            st.markdown(f"### {len(filtered_profiles)} profile(s), ranked by score")
+            for p in filtered_profiles:
                 render_profile(p)
 
     with tab_contributors:
@@ -247,7 +295,8 @@ if search_clicked and topic.strip():
             "including people with just 1-2 commits. These are often the reachable, "
             "less-senior contributors who get buried by citation/star-weighted scoring "
             "in the Ranked tab, but are still real, verifiable signal that someone works "
-            "hands-on in this area."
+            "hands-on in this area. (Location filter above does not apply to this tab — "
+            "GitHub's contributor list endpoint doesn't include location.)"
         )
         if not github_repos:
             st.info("No GitHub repos found for this topic.")
@@ -263,7 +312,5 @@ if search_clicked and topic.strip():
                     st.markdown(
                         f"- [@{c['login']}]({c['html_url']}) — {c['contributions']} commit(s) to this repo"
                     )
-elif search_clicked:
-    st.warning("Enter a topic first.")
 else:
     st.caption("Enter a topic above and hit Search to get started.")

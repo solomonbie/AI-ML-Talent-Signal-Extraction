@@ -12,6 +12,7 @@ including saying when it found nothing.
 """
 
 import os
+import time
 import xml.etree.ElementTree as ET
 import requests
 
@@ -19,17 +20,41 @@ GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "").strip()
 SEMANTIC_SCHOLAR_API_KEY = os.environ.get("SEMANTIC_SCHOLAR_API_KEY", "").strip()
 
 REQUEST_TIMEOUT = 15
+MAX_RETRIES = 3  # on a 429, retry with exponential backoff before giving up
 
 
-def _get(url, headers=None, params=None):
-    """Thin wrapper so every source fails the same (soft) way."""
-    try:
-        resp = requests.get(url, headers=headers, params=params, timeout=REQUEST_TIMEOUT)
+def _get(url, headers=None, params=None, max_retries=MAX_RETRIES):
+    """
+    Thin wrapper so every source fails the same (soft) way — with real
+    exponential backoff on 429 (rate limited), not just an instant fail.
+    Honors the server's Retry-After header when it sends one, since that's
+    a more accurate wait time than guessing.
+    """
+    delay = 1.0
+    for attempt in range(max_retries + 1):
+        try:
+            resp = requests.get(url, headers=headers, params=params, timeout=REQUEST_TIMEOUT)
+        except requests.RequestException as e:
+            return None, f"{url} -> request failed: {e}"
+
         if resp.status_code == 200:
             return resp, None
+
+        if resp.status_code == 429 and attempt < max_retries:
+            wait = delay
+            retry_after = resp.headers.get("Retry-After")
+            if retry_after:
+                try:
+                    wait = float(retry_after)
+                except ValueError:
+                    pass
+            time.sleep(wait)
+            delay *= 2
+            continue
+
         return None, f"{url} -> HTTP {resp.status_code}: {resp.text[:200]}"
-    except requests.RequestException as e:
-        return None, f"{url} -> request failed: {e}"
+
+    return None, f"{url} -> exceeded {max_retries} retries"
 
 
 # ---------------------------------------------------------------------------
@@ -227,13 +252,31 @@ def get_semantic_scholar_authors_batch(author_ids):
         headers["x-api-key"] = SEMANTIC_SCHOLAR_API_KEY
     params = {"fields": "name,affiliations"}
 
-    try:
-        resp = requests.post(url, headers=headers, params=params,
-                              json={"ids": author_ids}, timeout=REQUEST_TIMEOUT)
-        if resp.status_code != 200:
-            return {}, f"{url} -> HTTP {resp.status_code}: {resp.text[:200]}"
-    except requests.RequestException as e:
-        return {}, f"{url} -> request failed: {e}"
+    delay = 1.0
+    resp = None
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            resp = requests.post(url, headers=headers, params=params,
+                                  json={"ids": author_ids}, timeout=REQUEST_TIMEOUT)
+        except requests.RequestException as e:
+            return {}, f"{url} -> request failed: {e}"
+
+        if resp.status_code == 200:
+            break
+        if resp.status_code == 429 and attempt < MAX_RETRIES:
+            wait = delay
+            retry_after = resp.headers.get("Retry-After")
+            if retry_after:
+                try:
+                    wait = float(retry_after)
+                except ValueError:
+                    pass
+            time.sleep(wait)
+            delay *= 2
+            continue
+        return {}, f"{url} -> HTTP {resp.status_code}: {resp.text[:200]}"
+    else:
+        return {}, f"{url} -> exceeded {MAX_RETRIES} retries"
 
     result = {}
     for item in resp.json():

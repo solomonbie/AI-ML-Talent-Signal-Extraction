@@ -254,6 +254,7 @@ def render_profile(p):
 if search_clicked and topic.strip():
     st.session_state["last_topic"] = topic.strip()
     st.session_state["last_deep_lookup"] = deep_lookup
+    st.session_state["ranked_page"] = 0
     st.session_state["last_expand_related"] = expand_related
 elif search_clicked:
     st.warning("Enter a topic first.")
@@ -298,9 +299,36 @@ if "last_topic" in st.session_state:
             else:
                 st.info("No profiles found for this topic. Try a broader term.")
         else:
-            st.markdown(f"### {len(filtered_profiles)} profile(s), ranked by score")
-            for p in filtered_profiles:
+            PAGE_SIZE = 20
+            total = len(filtered_profiles)
+            total_pages = max(1, (total - 1) // PAGE_SIZE + 1)
+
+            # Clamp in case a new search or filter change shrank the list
+            # below whatever page we were previously sitting on.
+            st.session_state["ranked_page"] = min(st.session_state.get("ranked_page", 0), total_pages - 1)
+            page = st.session_state["ranked_page"]
+
+            start = page * PAGE_SIZE
+            end = min(start + PAGE_SIZE, total)
+
+            st.markdown(f"### {total} profile(s), ranked by score — showing {start + 1}-{end}")
+            for p in filtered_profiles[start:end]:
                 render_profile(p)
+
+            nav1, nav2, nav3 = st.columns([1, 2, 1])
+            with nav1:
+                if st.button("← Previous", disabled=(page == 0), use_container_width=True):
+                    st.session_state["ranked_page"] -= 1
+                    st.rerun()
+            with nav2:
+                st.markdown(
+                    f"<div style='text-align:center; padding-top:8px;'>Page {page + 1} of {total_pages}</div>",
+                    unsafe_allow_html=True,
+                )
+            with nav3:
+                if st.button("Next →", disabled=(page >= total_pages - 1), use_container_width=True):
+                    st.session_state["ranked_page"] += 1
+                    st.rerun()
 
     with tab_contributors:
         st.caption(

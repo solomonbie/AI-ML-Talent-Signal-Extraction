@@ -16,6 +16,8 @@ This is the part of the tool that actually embodies the four lessons:
 """
 
 import re
+from datetime import datetime
+from urllib.parse import quote
 
 
 def normalize_name(name: str) -> str:
@@ -33,9 +35,7 @@ def match_confidence(name_a: str, name_b: str) -> str:
     Extremely conservative matcher on purpose (Lesson #4: a shared
     identifier is a clue, never a verdict). We only call two names a
     match if they're identical once normalized, or one is a clear
-    subset of the other (e.g. "Yann LeCun" vs "Y. LeCun" handled
-    upstream — here we just do exact / substring on full tokens).
-    Returns "exact", "partial", or "none".
+    subset of the other. Returns "exact", "partial", or "none".
     """
     a, b = normalize_name(name_a), normalize_name(name_b)
     if not a or not b:
@@ -56,9 +56,6 @@ def build_profiles(topic, arxiv_papers, ss_papers, github_repos, hf_models,
     Semantic Scholar, since those come with real names) and then
     layering in GitHub / Hugging Face evidence ONLY where a name match
     can be made — explicitly labeled with its confidence.
-
-    Returns a list of profile dicts, sorted by score descending, plus
-    a coverage report (Lesson #3: report what was actually found this run).
     """
     ss_author_affiliations = ss_author_affiliations or {}
     profiles = {}  # normalized_name -> profile dict
@@ -113,11 +110,10 @@ def build_profiles(topic, arxiv_papers, ss_papers, github_repos, hf_models,
                 if affiliations:
                     p["location"] = ", ".join(affiliations)
 
-    # --- Secondary evidence: GitHub. Usernames aren't names, so we only
-    # attach a contributor to an existing profile if their public GitHub
-    # display name matches (exact/partial) an author we already found in
-    # papers. Unmatched contributors are kept separately as their own
-    # GitHub-only entries — never silently dropped, never force-merged.
+    # --- Secondary evidence: GitHub. Only attach a contributor to an
+    # existing profile if their public GitHub display name matches
+    # (exact/partial) an author we already found in papers. Unmatched
+    # contributors become their own entry — never force-merged.
     github_only = {}
     for repo in github_repos:
         contributors = github_contributors_by_repo.get(repo["full_name"], [])
@@ -165,9 +161,7 @@ def build_profiles(topic, arxiv_papers, ss_papers, github_repos, hf_models,
                 github_only[gkey]["github_stars"] += repo["stars"]
                 github_only[gkey]["github_contributions"] += c["contributions"]
 
-    # --- Secondary evidence: Hugging Face. Same conservative approach —
-    # HF "author" is usually an org or username, not a full name, so we
-    # only merge on a clean match; otherwise it's kept as its own entry.
+    # --- Secondary evidence: Hugging Face. Same conservative approach.
     hf_only = {}
     for model in hf_models:
         author = model.get("author")
@@ -206,7 +200,9 @@ def build_profiles(topic, arxiv_papers, ss_papers, github_repos, hf_models,
 
     all_profiles = list(profiles.values()) + list(github_only.values()) + list(hf_only.values())
 
-    # --- Scoring (transparent, adjustable weights — not a black box) ---
+    current_year = datetime.utcnow().year
+
+    # --- Scoring + research velocity (transparent, not a black box) ---
     for p in all_profiles:
         source_count = sum(1 for s in p["sources"].values() if len(s) > 0)
         cross_source_bonus = 40 * max(0, source_count - 1)
@@ -227,14 +223,40 @@ def build_profiles(topic, arxiv_papers, ss_papers, github_repos, hf_models,
             1,
         )
 
-    # --- Direct, clickable "check this person out" links, surfaced at the
-    # top of each profile instead of buried in the evidence trail. GitHub
-    # and Hugging Face links come straight from data we already have.
-    # LinkedIn has no free/legal API, so this is a pre-built LinkedIn
-    # people-search URL (LinkedIn's own search, not a scrape) — a starting
-    # point for you to verify manually, never a confirmed match.
-    from urllib.parse import quote
-    for p in all_profiles:
+        # Research velocity: how recently/often this person has published,
+        # not just their lifetime citation total. A steady stream of
+        # recent papers is often a stronger "still active right now"
+        # signal than a big old citation count.
+        years = []
+        for item in p["sources"]["arxiv"]:
+            pub = item.get("published")
+            if pub:
+                try:
+                    years.append(int(str(pub)[:4]))
+                except (ValueError, TypeError):
+                    pass
+        for item in p["sources"]["semantic_scholar"]:
+            y = item.get("year")
+            if y:
+                try:
+                    years.append(int(y))
+                except (ValueError, TypeError):
+                    pass
+        if years:
+            p["latest_publication_year"] = max(years)
+            p["recent_publications"] = sum(1 for y in years if y >= current_year - 1)
+            if p["recent_publications"] >= 2:
+                p["velocity"] = "rising"
+            elif p["recent_publications"] == 1:
+                p["velocity"] = "active"
+            else:
+                p["velocity"] = "quiet"
+        else:
+            p["latest_publication_year"] = None
+            p["recent_publications"] = 0
+            p["velocity"] = None
+
+        # Direct, clickable "check this person out" links.
         github_url = p["sources"]["github"][0]["url"] if p["sources"]["github"] else None
         hf_author = p["sources"]["huggingface"][0].get("author") if p["sources"]["huggingface"] else None
         p["links"] = {

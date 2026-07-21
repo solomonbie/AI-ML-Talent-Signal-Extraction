@@ -13,6 +13,11 @@ This is the part of the tool that actually embodies the four lessons:
 4. A name match across sources is a CLUE, never a VERDICT. We always
    label the confidence of a cross-source match and show the evidence
    trail so a human reviewer can override the merge.
+5. A repo's star count reflects the REPO's popularity, not any one
+   contributor's individual weight — so star credit is split by each
+   contributor's share of commits, not handed out in full to everyone
+   who ever touched the repo. Bot accounts are excluded entirely; they
+   are not people and were never a real lead.
 """
 
 import re
@@ -28,6 +33,17 @@ def normalize_name(name: str) -> str:
     name = re.sub(r"[.\-']", "", name)
     name = re.sub(r"\s+", " ", name)
     return name
+
+
+def is_bot_login(login: str) -> bool:
+    """
+    Conservative bot filter: GitHub's own convention is that automated
+    accounts (Dependabot, renovate-bot, github-actions, etc.) have
+    logins ending in "[bot]". This will not catch every bot, but it
+    will never wrongly exclude a real person, which is the safer
+    direction to err in.
+    """
+    return bool(login) and login.strip().lower().endswith("[bot]")
 
 
 def match_confidence(name_a: str, name_b: str) -> str:
@@ -71,7 +87,7 @@ def build_profiles(topic, arxiv_papers, ss_papers, github_repos, hf_models,
                 "sources": {"arxiv": [], "semantic_scholar": [], "github": [], "huggingface": []},
                 "citation_count": 0,
                 "influential_citation_count": 0,
-                "github_stars": 0,
+                "github_stars": 0.0,
                 "github_contributions": 0,
                 "hf_downloads": 0,
                 "hf_likes": 0,
@@ -114,11 +130,22 @@ def build_profiles(topic, arxiv_papers, ss_papers, github_repos, hf_models,
     # existing profile if their public GitHub display name matches
     # (exact/partial) an author we already found in papers. Unmatched
     # contributors become their own entry — never force-merged.
+    #
+    # Star credit is split by each contributor's SHARE of commits among
+    # the contributors we fetched for that repo, not handed out in full
+    # to every single contributor — otherwise a person with 1 commit to
+    # a 90,000-star repo looks identical to its lead maintainer.
     github_only = {}
     for repo in github_repos:
-        contributors = github_contributors_by_repo.get(repo["full_name"], [])
+        contributors = [c for c in github_contributors_by_repo.get(repo["full_name"], [])
+                         if not is_bot_login(c.get("login"))]
+        total_contributions = sum(c["contributions"] for c in contributors) or 1
+
         for c in contributors:
             login = c["login"]
+            share = c["contributions"] / total_contributions
+            star_credit = repo["stars"] * share
+
             user = github_users_by_login.get(login)
             display_name = (user or {}).get("name")
             matched_key = None
@@ -136,7 +163,7 @@ def build_profiles(topic, arxiv_papers, ss_papers, github_repos, hf_models,
                     "repo": repo["full_name"], "stars": repo["stars"],
                     "contributions": c["contributions"], "url": c["html_url"],
                 })
-                p["github_stars"] += repo["stars"]
+                p["github_stars"] += star_credit
                 p["github_contributions"] += c["contributions"]
                 if user and user.get("location") and not p["location"]:
                     p["location"] = user["location"]
@@ -151,14 +178,14 @@ def build_profiles(topic, arxiv_papers, ss_papers, github_repos, hf_models,
                         "location": (user or {}).get("location"),
                         "sources": {"arxiv": [], "semantic_scholar": [], "github": [], "huggingface": []},
                         "citation_count": 0, "influential_citation_count": 0,
-                        "github_stars": 0, "github_contributions": 0,
+                        "github_stars": 0.0, "github_contributions": 0,
                         "hf_downloads": 0, "hf_likes": 0, "match_notes": [],
                     }
                 github_only[gkey]["sources"]["github"].append({
                     "repo": repo["full_name"], "stars": repo["stars"],
                     "contributions": c["contributions"], "url": c["html_url"],
                 })
-                github_only[gkey]["github_stars"] += repo["stars"]
+                github_only[gkey]["github_stars"] += star_credit
                 github_only[gkey]["github_contributions"] += c["contributions"]
 
     # --- Secondary evidence: Hugging Face. Same conservative approach.
@@ -191,7 +218,7 @@ def build_profiles(topic, arxiv_papers, ss_papers, github_repos, hf_models,
                     "location": None,
                     "sources": {"arxiv": [], "semantic_scholar": [], "github": [], "huggingface": []},
                     "citation_count": 0, "influential_citation_count": 0,
-                    "github_stars": 0, "github_contributions": 0,
+                    "github_stars": 0.0, "github_contributions": 0,
                     "hf_downloads": 0, "hf_likes": 0, "match_notes": [],
                 }
             hf_only[hkey]["sources"]["huggingface"].append(model)
@@ -207,6 +234,7 @@ def build_profiles(topic, arxiv_papers, ss_papers, github_repos, hf_models,
         source_count = sum(1 for s in p["sources"].values() if len(s) > 0)
         cross_source_bonus = 40 * max(0, source_count - 1)
         p["source_count"] = source_count
+        p["github_stars"] = round(p["github_stars"], 1)
         p["confidence"] = (
             "high" if source_count >= 2 else
             "medium" if (p["citation_count"] > 0 or p["github_stars"] > 0 or p["hf_downloads"] > 0) else
@@ -224,9 +252,7 @@ def build_profiles(topic, arxiv_papers, ss_papers, github_repos, hf_models,
         )
 
         # Research velocity: how recently/often this person has published,
-        # not just their lifetime citation total. A steady stream of
-        # recent papers is often a stronger "still active right now"
-        # signal than a big old citation count.
+        # not just their lifetime citation total.
         years = []
         for item in p["sources"]["arxiv"]:
             pub = item.get("published")

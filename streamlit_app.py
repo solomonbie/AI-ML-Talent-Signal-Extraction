@@ -210,7 +210,7 @@ def render_profile(p):
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Citations", p["citation_count"])
         m2.metric("Influential citations", p["influential_citation_count"])
-        m3.metric("GitHub stars", p["github_stars"])
+        m3.metric("GitHub stars (weighted by contribution share)", p["github_stars"])
         m4.metric("HF downloads", p["hf_downloads"])
 
         velocity = p.get("velocity")
@@ -241,7 +241,7 @@ def render_profile(p):
                 st.markdown("**GitHub**")
                 render_evidence(p["sources"]["github"], lambda i: (
                     f'<a href="{i["url"]}" target="_blank">{i["repo"]}</a>'
-                    f'<br><span style="opacity:.6">GitHub · {i["stars"]}★ repo · {i["contributions"]} contributions</span>'
+                    f'<br><span style="opacity:.6">GitHub · {i["stars"]}★ repo (full repo total, not weighted) · {i["contributions"]} contributions</span>'
                 ))
             if p["sources"]["huggingface"]:
                 st.markdown("**Hugging Face**")
@@ -305,12 +305,16 @@ if "last_topic" in st.session_state:
     with tab_contributors:
         st.caption(
             "Unranked, unscored — every contributor GitHub reports for each repo found, "
-            "including people with just 1-2 commits."
+            "including people with just 1-2 commits. Bot accounts (e.g. dependabot) are "
+            "excluded from this list too."
         )
         if not github_repos:
             st.info("No GitHub repos found for this topic.")
         for repo in github_repos:
-            contributors = github_contributors_by_repo.get(repo["full_name"], [])
+            contributors = [
+                c for c in github_contributors_by_repo.get(repo["full_name"], [])
+                if not aggregator.is_bot_login(c.get("login"))
+            ]
             with st.expander(f"{repo['full_name']} — {repo['stars']}★ · {len(contributors)} contributor(s) shown"):
                 st.markdown(f"[Open repo on GitHub]({repo['url']})")
                 if repo.get("description"):
